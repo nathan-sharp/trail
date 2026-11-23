@@ -410,23 +410,28 @@ class TrailUpdateMonitor:
 
     def refresh(
         self,
+        force: bool = False,
         resolver: Optional[DnsResolver] = None,
         fetcher: Optional[HttpFetcher] = None,
         runner: Optional[CommandRunner] = None,
     ) -> SystemUpdateReport:
-        """Execute a version check and optional auto-update, storing the report."""
+        """Execute a version check and optional or forced auto-update."""
         report = check_all_system_versions(
             self._config, resolver=resolver, fetcher=fetcher, runner=runner
         )
-        if not report.all_up_to_date and self._config.auto_update_enabled:
+        should_update = force or (
+            not report.all_up_to_date and self._config.auto_update_enabled
+        )
+        if should_update:
             _, action_msg = apply_system_updates(
                 self._config, resolver=resolver, runner=runner
             )
+            prefix = "FORCED_UPDATE" if force else "AUTO_UPDATE"
             report = SystemUpdateReport(
                 checked_at=report.checked_at,
                 all_up_to_date=report.all_up_to_date,
                 components=report.components,
-                last_update_action=f"AUTO_UPDATE ({action_msg})",
+                last_update_action=f"{prefix} ({action_msg})",
             )
         with self._lock:
             self._report = report
@@ -438,11 +443,21 @@ class TrailUpdateMonitor:
             return self._report
 
 
-def main() -> int:
-    """Daemon entrypoint for the trail-updater sidecar service."""
+def main(argv: Optional[List[str]] = None) -> int:
+    """Entrypoint for trail-updater daemon or one-shot '--force' CLI update."""
+    args = argv if argv is not None else sys.argv[1:]
+    force_once = "--force" in args or "--once" in args
     workspace_root = Path(__file__).resolve().parent.parent
     config = load_config_from_env(workspace_root)
     monitor = TrailUpdateMonitor(config)
+
+    if force_once:
+        report = monitor.refresh(force=True)
+        sys.stderr.write(
+            f"trail-updater: forced update complete | "
+            f"action={report.last_update_action}\n"
+        )
+        return 0
 
     for _ in range(MAX_UPDATE_CYCLES):
         report = monitor.refresh()

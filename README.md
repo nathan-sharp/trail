@@ -45,8 +45,9 @@ curl -fsSL https://raw.githubusercontent.com/nathan-sharp/trail/main/install.sh 
 
 | Action | Command or Uniform Resource Locator (URL) |
 | :--- | :--- |
+| **Force an immediate system update** | `trail-update` (or `curl -fsSL https://raw.githubusercontent.com/nathan-sharp/trail/main/install.sh \| sudo bash`) |
 | **Edit crawled seed websites** | `sudo nano /opt/trail/config/seeds.txt` (reloads automatically every $30\text{ s}$) |
-| **View version compliance status** | Open `http://<raspberry-pi-ip>:8080/status` |
+| **View system and index status** | Open `http://<raspberry-pi-ip>:8080/status` |
 | **Add as default browser search** | Open your TRAIL URL and select **Add "TRAIL Search"** in the browser address bar |
 | **View container logs** | `sudo docker logs -f trail-server` |
-| **Run unit test suite (20 tests)** | `python3 -m unittest discover -s tests -v` |
+| **Run unit test suite (21 tests)** | `python3 -m unittest discover -s tests -v` |

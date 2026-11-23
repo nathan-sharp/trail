@@ -5,3 +5,7 @@ https://info.cern.ch/
 https://www.rfc-editor.org/
 https://lite.cnn.com/
 https://text.npr.org/
+https://www.bbc.co.uk/
+https://njs.dev/
+https://www.wuffs.xyz/
+https://neocities.org/

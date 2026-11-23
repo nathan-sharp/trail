@@ -97,13 +97,18 @@ if [[ "${EXISTING_ENV}" == "false" ]]; then
     fi
 fi
 
-echo "[5/5] Starting TRAIL stack (auto-provisioning USB drive and containers)..."
+echo "[5/5] Installing 'trail-update' CLI command and starting TRAIL stack..."
+if [[ -f "${INSTALL_DIR}/scripts/trail-update.sh" ]]; then
+    cp "${INSTALL_DIR}/scripts/trail-update.sh" /usr/local/bin/trail-update
+    chmod 755 /usr/local/bin/trail-update
+fi
 docker compose up -d --build
 
 for ((i = 1; i <= MAX_HEALTH_RETRIES; i++)); do
     if curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
         echo "TRAIL v2026 is online at ${ARG_BASE_URL} (Local: http://127.0.0.1:8080/)."
         echo "Edit seed URLs at: ${INSTALL_DIR}/config/seeds.txt"
+        echo "Force an immediate system update at any time by running: trail-update"
         exit 0
     fi
     sleep 2

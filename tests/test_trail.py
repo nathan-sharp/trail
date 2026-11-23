@@ -654,9 +654,13 @@ class TestTrailVersionAndAutoUpdate(unittest.TestCase):
     def test_install_sh_enforces_strict_mode_and_input_allowlists(self) -> None:
         # Arrange
         script_path = Path(__file__).resolve().parent.parent / "install.sh"
+        update_script_path = (
+            Path(__file__).resolve().parent.parent / "scripts" / "trail-update.sh"
+        )
 
         # Act
         script_text = script_path.read_text(encoding="utf-8")
+        update_script_text = update_script_path.read_text(encoding="utf-8")
 
         # Assert
         self.assertIn("set -euo pipefail", script_text)
@@ -665,7 +669,61 @@ class TestTrailVersionAndAutoUpdate(unittest.TestCase):
         self.assertIn("TOKEN_REGEX='^[A-Za-z0-9._/+=-]*$'", script_text)
         self.assertNotIn(r"\-", script_text)
         self.assertIn("is the Tunnel ID (UUID), not the Tunnel Token", script_text)
+        self.assertIn("/usr/local/bin/trail-update", script_text)
         self.assertIn("docker compose up -d --build", script_text)
+        self.assertIn("set -euo pipefail", update_script_text)
+        self.assertIn("docker compose build --pull", update_script_text)
+
+    def test_forced_update_flag_executes_update_even_when_versions_match(self) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = TrailConfig(
+                base_url="http://localhost:8080",
+                db_path=root / "trail.db",
+                seeds_path=root / "seeds.txt",
+                host="127.0.0.1",
+                port=8080,
+                max_hop_depth=1,
+                max_pages_per_domain=10,
+                crawl_delay_seconds=1,
+                crawl_batch_size=5,
+                crawl_interval_seconds=30,
+                results_per_page=10,
+                user_agent="TRAIL/v2026",
+                auto_update_enabled=False,
+            )
+            monitor = TrailUpdateMonitor(config)
+            executed_cmds: List[List[str]] = []
+
+            def _mock_fetcher(
+                url: str, _ua: str, _max_b: int
+            ) -> Tuple[int, str, Dict[str, str], bytes]:
+                return (
+                    200,
+                    url,
+                    {"content-type": "application/json"},
+                    b'{"tag_name": "v2026"}',
+                )
+
+            def _mock_runner(cmd: List[str]) -> Tuple[int, str]:
+                executed_cmds.append(cmd)
+                return (0, "0 upgraded")
+
+            # Act
+            report = monitor.refresh(
+                force=True,
+                resolver=_stub_public_resolver,
+                fetcher=_mock_fetcher,
+                runner=_mock_runner,
+            )
+
+            # Assert
+            self.assertIn("FORCED_UPDATE (git:ok, apt:upgraded)", report.last_update_action)
+            self.assertIn(
+                ["git", "pull", "--ff-only", "https://github.com/nathan-sharp/trail"],
+                executed_cmds,
+            )
 
 
 class TestTrailStorageAndCrawler(unittest.TestCase):
