@@ -1,0 +1,7 @@
+# TRAIL Seed URL Configuration File
+# Format: One HTTP or HTTPS URL per line. Lines starting with '#' are comments.
+# The crawler reads this file at the start of every crawl cycle.
+https://info.cern.ch/
+https://www.rfc-editor.org/
+https://lite.cnn.com/
+https://text.npr.org/

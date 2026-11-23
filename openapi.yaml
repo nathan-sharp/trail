@@ -1,0 +1,157 @@
+openapi: 3.1.0
+info:
+  title: TRAIL (Text Retrieval & Automated Indexing Library) API
+  version: 1.0.0
+  summary: Self-hosted HTML 2.0 search engine and OpenSearch 1.1 provider.
+  description: >-
+    API specification for TRAIL. Complies with HTML 2.0 (RFC 1866) form
+    submission and OpenSearch 1.1 autodiscovery. Collects zero personal data.
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+  - url: http://localhost:8080
+    description: Local container HTTP endpoint
+security:
+  - PublicReadAccess: []
+paths:
+  /:
+    get:
+      operationId: getHomeOrSearch
+      summary: Render HTML 2.0 search home page or execute full-text query
+      security:
+        - PublicReadAccess: []
+      parameters:
+        - $ref: '#/components/parameters/QueryParam'
+        - $ref: '#/components/parameters/PageParam'
+      responses:
+        '200':
+          $ref: '#/components/responses/Html20PageResponse'
+        '400':
+          $ref: '#/components/responses/Html20BadRequestResponse'
+        '500':
+          $ref: '#/components/responses/Html20ServerErrorResponse'
+  /search:
+    get:
+      operationId: executeSearch
+      summary: Execute BM25 full-text search query and render HTML 2.0 results
+      security:
+        - PublicReadAccess: []
+      parameters:
+        - $ref: '#/components/parameters/QueryParam'
+        - $ref: '#/components/parameters/PageParam'
+      responses:
+        '200':
+          $ref: '#/components/responses/Html20PageResponse'
+        '400':
+          $ref: '#/components/responses/Html20BadRequestResponse'
+        '500':
+          $ref: '#/components/responses/Html20ServerErrorResponse'
+  /opensearch.xml:
+    get:
+      operationId: getOpenSearchDescriptor
+      summary: Retrieve OpenSearch 1.1 XML description document
+      security:
+        - PublicReadAccess: []
+      responses:
+        '200':
+          $ref: '#/components/responses/OpenSearchXmlResponse'
+        '500':
+          $ref: '#/components/responses/Html20ServerErrorResponse'
+  /healthz:
+    get:
+      operationId: getHealthStatus
+      summary: Retrieve deterministic container health status in plain text
+      security:
+        - PublicReadAccess: []
+      responses:
+        '200':
+          $ref: '#/components/responses/HealthOkResponse'
+        '500':
+          $ref: '#/components/responses/Html20ServerErrorResponse'
+components:
+  securitySchemes:
+    PublicReadAccess:
+      type: apiKey
+      in: header
+      name: X-Anonymous-Access
+      description: >-
+        Read-only public search endpoints require no authentication header.
+        Administration occurs strictly via local disk configuration files
+        (seeds.txt) with zero exposed network mutation endpoints.
+  parameters:
+    QueryParam:
+      name: q
+      in: query
+      required: false
+      description: Full-text search terms (1 to 200 printable characters).
+      schema:
+        $ref: '#/components/schemas/SearchQueryString'
+    PageParam:
+      name: page
+      in: query
+      required: false
+      description: 1-based result page number (1 to 100).
+      schema:
+        $ref: '#/components/schemas/PageNumber'
+  schemas:
+    SearchQueryString:
+      $schema: https://json-schema.org/draft/2020-12/schema
+      type: string
+      minLength: 0
+      maxLength: 200
+      pattern: '^[\x20-\x7E\xA0-\uFFFF]*$'
+      description: Allow-listed printable character search query string.
+    PageNumber:
+      $schema: https://json-schema.org/draft/2020-12/schema
+      type: integer
+      minimum: 1
+      maximum: 100
+      default: 1
+      description: Bounded 1-based pagination index.
+    HtmlDocument:
+      $schema: https://json-schema.org/draft/2020-12/schema
+      type: string
+      description: RFC 1866 HTML 2.0 compliant document without CSS or JavaScript.
+    OpenSearchDocument:
+      $schema: https://json-schema.org/draft/2020-12/schema
+      type: string
+      description: OpenSearch 1.1 XML description document.
+    HealthStatusText:
+      $schema: https://json-schema.org/draft/2020-12/schema
+      type: string
+      const: "OK\n"
+  responses:
+    Html20PageResponse:
+      description: HTML 2.0 compliant document rendered successfully.
+      headers:
+        Content-Type:
+          schema:
+            type: string
+            const: text/html; charset=iso-8859-1
+      content:
+        text/html:
+          schema:
+            $ref: '#/components/schemas/HtmlDocument'
+    Html20BadRequestResponse:
+      description: Input validation failed against allow-list rules.
+      content:
+        text/html:
+          schema:
+            $ref: '#/components/schemas/HtmlDocument'
+    Html20ServerErrorResponse:
+      description: Internal error handled via fail-closed error page.
+      content:
+        text/html:
+          schema:
+            $ref: '#/components/schemas/HtmlDocument'
+    OpenSearchXmlResponse:
+      description: OpenSearch 1.1 compliant XML description.
+      content:
+        application/opensearchdescription+xml:
+          schema:
+            $ref: '#/components/schemas/OpenSearchDocument'
+    HealthOkResponse:
+      description: Database and HTTP subsystem operational.
+      content:
+        text/plain:
+          schema:
+            $ref: '#/components/schemas/HealthStatusText'
