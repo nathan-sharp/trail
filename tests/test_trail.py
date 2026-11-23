@@ -617,9 +617,17 @@ class TestTrailVersionAndAutoUpdate(unittest.TestCase):
             self.assertIn("v2026-12-01", html_text)
             self.assertIn("AUTO_UPDATE (git:ok, apt:upgraded)", html_text)
             self.assertIn(
-                ["git", "pull", "--ff-only", "https://github.com/nathan-sharp/trail"],
+                [
+                    "git",
+                    "fetch",
+                    "--depth",
+                    "1",
+                    "https://github.com/nathan-sharp/trail",
+                    "main",
+                ],
                 executed_cmds,
             )
+            self.assertIn(["git", "reset", "--hard", "FETCH_HEAD"], executed_cmds)
 
     def test_apply_system_updates_blocks_ssrf_repo_url(self) -> None:
         # Arrange
@@ -670,18 +678,22 @@ class TestTrailVersionAndAutoUpdate(unittest.TestCase):
         self.assertNotIn(r"\-", script_text)
         self.assertIn("is the Tunnel ID (UUID), not the Tunnel Token", script_text)
         self.assertIn("/usr/local/bin/trail-update", script_text)
+        self.assertIn("git -C \"${INSTALL_DIR}\" reset --hard origin/main", script_text)
         self.assertIn("docker compose up -d --build", script_text)
         self.assertIn("set -euo pipefail", update_script_text)
+        self.assertIn("git reset --hard origin/main", update_script_text)
         self.assertIn("docker compose build --pull", update_script_text)
 
     def test_forced_update_flag_executes_update_even_when_versions_match(self) -> None:
         # Arrange
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            seeds_file = root / "seeds.txt"
+            seeds_file.write_text("https://custom.local.seed/\n", encoding="utf-8")
             config = TrailConfig(
                 base_url="http://localhost:8080",
                 db_path=root / "trail.db",
-                seeds_path=root / "seeds.txt",
+                seeds_path=seeds_file,
                 host="127.0.0.1",
                 port=8080,
                 max_hop_depth=1,
@@ -708,6 +720,8 @@ class TestTrailVersionAndAutoUpdate(unittest.TestCase):
 
             def _mock_runner(cmd: List[str]) -> Tuple[int, str]:
                 executed_cmds.append(cmd)
+                if cmd == ["git", "reset", "--hard", "FETCH_HEAD"]:
+                    seeds_file.write_text("https://upstream.seed/\n", encoding="utf-8")
                 return (0, "0 upgraded")
 
             # Act
@@ -717,13 +731,23 @@ class TestTrailVersionAndAutoUpdate(unittest.TestCase):
                 fetcher=_mock_fetcher,
                 runner=_mock_runner,
             )
+            merged_seeds = seeds_file.read_text(encoding="utf-8")
 
             # Assert
             self.assertIn("FORCED_UPDATE (git:ok, apt:upgraded)", report.last_update_action)
             self.assertIn(
-                ["git", "pull", "--ff-only", "https://github.com/nathan-sharp/trail"],
+                [
+                    "git",
+                    "fetch",
+                    "--depth",
+                    "1",
+                    "https://github.com/nathan-sharp/trail",
+                    "main",
+                ],
                 executed_cmds,
             )
+            self.assertIn("https://upstream.seed/", merged_seeds)
+            self.assertIn("https://custom.local.seed/", merged_seeds)
 
 
 class TestTrailStorageAndCrawler(unittest.TestCase):

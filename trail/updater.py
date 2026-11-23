@@ -347,12 +347,37 @@ def check_all_system_versions(
     )
 
 
+def _merge_seeds_file(seeds_path: Path, saved_lines: List[str]) -> None:
+    """Merge saved local seed URLs with upstream seeds.txt without duplicates."""
+    if not saved_lines:
+        return
+    try:
+        current_lines: List[str] = []
+        if seeds_path.is_file():
+            current_lines = seeds_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()[:1000]
+        seen = set()
+        merged: List[str] = []
+        combined = current_lines + saved_lines
+        bound = min(len(combined), 2000)
+        for idx in range(bound):
+            line = combined[idx].rstrip("\r")
+            if line not in seen:
+                seen.add(line)
+                merged.append(line)
+        seeds_path.parent.mkdir(parents=True, exist_ok=True)
+        seeds_path.write_text("\n".join(merged) + "\n", encoding="utf-8")
+    except OSError:
+        return
+
+
 def apply_system_updates(
     config: TrailConfig,
     resolver: Optional[DnsResolver] = None,
     runner: Optional[CommandRunner] = None,
 ) -> Tuple[bool, str]:
-    """Pull latest verified Git commits, upgrade Debian packages, and pull images."""
+    """Fetch and reset to latest Git main while preserving seeds.txt, then upgrade."""
     active_runner = runner if runner is not None else default_command_runner
     actions: List[str] = []
 
@@ -362,8 +387,22 @@ def apply_system_updates(
         )
         if not ok_repo:
             return (False, "Blocked invalid or non-public TRAIL_REPO_URL")
-        code_git, _ = active_runner(["git", "pull", "--ff-only", norm_repo])
-        actions.append("git:ok" if code_git == 0 else "git:skipped")
+        saved_seeds: List[str] = []
+        if config.seeds_path.is_file():
+            try:
+                saved_seeds = config.seeds_path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()[:1000]
+            except OSError:
+                saved_seeds = []
+        code_fetch, _ = active_runner(
+            ["git", "fetch", "--depth", "1", norm_repo, "main"]
+        )
+        code_reset, _ = active_runner(["git", "reset", "--hard", "FETCH_HEAD"])
+        _merge_seeds_file(config.seeds_path, saved_seeds)
+        actions.append(
+            "git:ok" if (code_fetch == 0 and code_reset == 0) else "git:skipped"
+        )
 
     code_apt_u, _ = active_runner(["apt-get", "update"])
     if code_apt_u == 0:

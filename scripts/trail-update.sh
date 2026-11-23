@@ -25,10 +25,10 @@ if [[ -f "config/seeds.txt" ]]; then
 fi
 
 git fetch --depth 1 origin main
-git checkout -B main origin/main
+git reset --hard origin/main
 
 if [[ -s "${SEEDS_BACKUP}" ]]; then
-    cat "${SEEDS_BACKUP}" "config/seeds.txt" | awk '!seen[$0]++' > "config/seeds.txt.merged"
+    cat "config/seeds.txt" "${SEEDS_BACKUP}" | tr -d '\r' | awk '!seen[$0]++' > "config/seeds.txt.merged"
     mv "config/seeds.txt.merged" "config/seeds.txt"
 fi
 rm -f "${SEEDS_BACKUP}"

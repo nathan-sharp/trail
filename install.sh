@@ -77,7 +77,17 @@ fi
 
 echo "[3/5] Fetching TRAIL repository (${REPO_URL}) into ${INSTALL_DIR}..."
 if [[ -d "${INSTALL_DIR}/.git" ]]; then
-    git -C "${INSTALL_DIR}" pull --ff-only
+    SEEDS_BACKUP="$(mktemp)"
+    if [[ -f "${INSTALL_DIR}/config/seeds.txt" ]]; then
+        cp "${INSTALL_DIR}/config/seeds.txt" "${SEEDS_BACKUP}"
+    fi
+    git -C "${INSTALL_DIR}" fetch --depth 1 origin main
+    git -C "${INSTALL_DIR}" reset --hard origin/main
+    if [[ -s "${SEEDS_BACKUP}" ]]; then
+        cat "${INSTALL_DIR}/config/seeds.txt" "${SEEDS_BACKUP}" | tr -d '\r' | awk '!seen[$0]++' > "${INSTALL_DIR}/config/seeds.txt.merged"
+        mv "${INSTALL_DIR}/config/seeds.txt.merged" "${INSTALL_DIR}/config/seeds.txt"
+    fi
+    rm -f "${SEEDS_BACKUP}"
 else
     mkdir -p "${INSTALL_DIR}"
     git clone "${REPO_URL}" "${INSTALL_DIR}"
