@@ -647,6 +647,9 @@ class TestTrailVersionAndAutoUpdate(unittest.TestCase):
         self.assertIn("set -euo pipefail", script_text)
         self.assertIn("https://github.com/nathan-sharp/trail.git", script_text)
         self.assertIn("chmod 600 .env", script_text)
+        self.assertIn("TOKEN_REGEX='^[A-Za-z0-9._/+=-]*$'", script_text)
+        self.assertNotIn(r"\-", script_text)
+        self.assertIn("is the Tunnel ID (UUID), not the Tunnel Token", script_text)
         self.assertIn("docker compose up -d --build", script_text)
 
 

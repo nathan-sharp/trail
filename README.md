@@ -16,15 +16,15 @@ TRAIL (`v2026`) is a self-hosted web crawler, Full-Text Search Version 5 (FTS5) 
 
 ### Setup Steps
 1. Plug the $2\text{ TB}$ USB drive into a blue USB 3.0 port on the Raspberry Pi.
-2. Create a tunnel in the Cloudflare Zero Trust dashboard (`https://one.dash.cloudflare.com/`), copy the tunnel token, and route your public hostname to `http://trail:8080`.
-3. Run the one-line installer on the Raspberry Pi terminal (prompts interactively for your Uniform Resource Locator (URL) and Cloudflare token):
+2. In the Cloudflare Zero Trust tunnel setup screen, click the **Copy** button on the **Run tunnel with Docker** box (not the **Tunnel ID** box), and route your public hostname to `http://trail:8080`.
+3. Run the one-line installer on the Raspberry Pi terminal and paste either the copied **Run tunnel with Docker** command or the `eyJ...` token when prompted:
    ```bash
    curl -fsSL https://raw.githubusercontent.com/nathan-sharp/trail/main/install.sh | sudo bash
    ```
 
-*(Optional non-interactive one-liner)*:
+*(Optional non-interactive one-liner using the `eyJ...` token from the end of the "Run tunnel with Docker" box)*:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nathan-sharp/trail/main/install.sh | sudo bash -s -- https://search.example.com YOUR_CLOUDFLARE_TOKEN
+curl -fsSL https://raw.githubusercontent.com/nathan-sharp/trail/main/install.sh | sudo bash -s -- https://search.njs.dev eyJhIjoi...
 ```
 
 ---
@@ -34,19 +34,19 @@ curl -fsSL https://raw.githubusercontent.com/nathan-sharp/trail/main/install.sh 
 | Stage | Automated Action |
 | :--- | :--- |
 | **1. Host Packages** | Installs `git`, `curl`, `ca-certificates`, Docker Engine, and Docker Compose if missing. |
-| **2. Repository & Config** | Clones `https://github.com/nathan-sharp/trail.git` to `/opt/trail` and writes `/opt/trail/.env` with mode `0600`. |
+| **2. Repository & Config** | Clones `https://github.com/nathan-sharp/trail.git` to `/opt/trail`, extracts the `eyJ...` token even if you paste the full `docker run ...` string, and writes `/opt/trail/.env` with mode `0600`. |
 | **3. USB Drive Setup** | Detects the non-boot USB disk $\ge 500\text{ GB}$ ($5.0 \times 10^{11}\text{ bytes}$), creates a GUID Partition Table (GPT), formats as `ext4` (`LABEL=TRAIL_DATA`) on first boot, mounts `/app/data`, and drops process privileges to User Identifier (UID) `10001`. |
-| **4. Search & Tunnel** | Starts the RFC 1866 HTML 2.0 server, OpenSearch 1.1 Extensible Markup Language (XML) endpoint (`/opensearch.xml`), open-hop crawler, and Cloudflare Tunnel. |
+| **4. Search & Tunnel** | Starts the Request for Comments (RFC) 1866 HTML 2.0 server, OpenSearch 1.1 Extensible Markup Language (XML) endpoint (`/opensearch.xml`), open-hop crawler, and Cloudflare Tunnel. |
 | **5. Auto-Updater** | Audits International Organization for Standardization (ISO) Timestamp Versioning (https://njs.dev/other/versioning/) and Debian packages every $21\,600\text{ seconds (s)}$ ($6\text{ hours (h)}$) and applies updates automatically. |
 
 ---
 
 ## 3. Common Operations
 
-| Action | Command or URL |
+| Action | Command or Uniform Resource Locator (URL) |
 | :--- | :--- |
 | **Edit crawled seed websites** | `sudo nano /opt/trail/config/seeds.txt` (reloads automatically every $30\text{ s}$) |
 | **View version compliance status** | Open `http://<raspberry-pi-ip>:8080/status` |
 | **Add as default browser search** | Open your TRAIL URL and select **Add "TRAIL Search"** in the browser address bar |
 | **View container logs** | `sudo docker logs -f trail-server` |
-| **Run unit test suite (19 tests)** | `python3 -m unittest discover -s tests -v` |
+| **Run unit test suite (20 tests)** | `python3 -m unittest discover -s tests -v` |
