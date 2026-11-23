@@ -10,7 +10,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends util-linux parted e2fsprogs && \
+    apt-get upgrade -y --no-install-recommends && \
+    apt-get install -y --no-install-recommends util-linux parted e2fsprogs git ca-certificates && \
     rm -rf /var/lib/apt/lists/* && \
     groupadd --gid 10001 trailgroup && \
     useradd --uid 10001 --gid trailgroup --shell /usr/sbin/nologin --no-create-home trailuser && \

@@ -6,7 +6,13 @@ import tempfile
 from typing import Dict, List, Tuple
 import unittest
 
-from trail.config import TrailConfig, validate_confined_path
+from trail import __version__ as TRAIL_VERSION
+from trail.config import (
+    DEFAULT_TRAIL_REPO_URL,
+    TrailConfig,
+    load_config_from_env,
+    validate_confined_path,
+)
 from trail.crawler import TrailCrawler, fetch_url_safely
 from trail.disk import (
     MIN_USB_CAPACITY_BYTES,
@@ -22,6 +28,15 @@ from trail.security import (
 )
 from trail.server import dispatch_get_request
 from trail.storage import TrailStorage
+from trail.updater import (
+    TrailUpdateMonitor,
+    apply_system_updates,
+    check_all_system_versions,
+    derive_github_release_api_url,
+    format_njs_iso_version,
+    is_version_up_to_date,
+    parse_njs_iso_version,
+)
 
 
 def _stub_public_resolver(hostname: str, _port: int) -> List[str]:
@@ -29,6 +44,8 @@ def _stub_public_resolver(hostname: str, _port: int) -> List[str]:
     mapping = {
         "example.com": ["93.184.215.14"],
         "ext.org": ["93.184.215.15"],
+        "api.github.com": ["140.82.121.6"],
+        "github.com": ["140.82.121.4"],
         "internal.corp": ["192.168.1.50"],
         "metadata.cloud": ["169.254.169.254"],
         "loop.back": ["127.0.0.1"],
@@ -88,7 +105,7 @@ def _sample_lsblk_json(
                         "fstype": "vfat",
                         "mountpoint": "/boot/firmware",
                         "uuid": "BOOT-1234",
-                        "label": " single-boot",
+                        "label": "single-boot",
                     },
                     {
                         "name": "mmcblk0p2",
@@ -235,7 +252,7 @@ class TestTrailSecurity(unittest.TestCase):
         # Act
         ok, final_url, _, body = fetch_url_safely(
             "https://example.com/start",
-            "TRAIL/1.0",
+            "TRAIL/v2026",
             1024,
             resolver=_stub_public_resolver,
             fetcher=_redirect_fetcher,
@@ -321,7 +338,9 @@ class TestTrailDiskAutomation(unittest.TestCase):
                 override_device="",
                 min_capacity_bytes=MIN_USB_CAPACITY_BYTES,
                 auto_format=True,
-                lsblk_provider=lambda: _sample_lsblk_json(usb_fstype="exfat", usb_label="FACTORY"),
+                lsblk_provider=lambda: _sample_lsblk_json(
+                    usb_fstype="exfat", usb_label="FACTORY"
+                ),
                 runner=_mock_runner,
             )
 
@@ -411,6 +430,213 @@ class TestTrailDiskAutomation(unittest.TestCase):
             )
 
 
+class TestTrailVersionAndAutoUpdate(unittest.TestCase):
+    """Verify NJS ISO Timestamp Versioning (https://njs.dev/other/versioning/) and auto-updater."""
+
+    def test_default_repo_and_initial_njs_iso_version(self) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            # Act
+            cfg = load_config_from_env(root)
+
+            # Assert
+            self.assertEqual(TRAIL_VERSION, "v2026")
+            self.assertEqual(DEFAULT_TRAIL_REPO_URL, "https://github.com/nathan-sharp/trail")
+            self.assertEqual(cfg.repo_url, "https://github.com/nathan-sharp/trail")
+
+    def test_njs_iso_version_example_timeline_and_comparison(self) -> None:
+        # Arrange
+        priors_empty: List[str] = []
+        priors_1990 = ["1989-03-12"]
+        priors_1991_jul_09 = ["1989-03-12", "1990-11-12", "1991-03-15"]
+        priors_1991_jul_14 = ["1989-03-12", "1990-11-12", "1991-03-15", "1991-07-15T09"]
+        priors_1991_aug_01 = priors_1991_jul_14
+        priors_1991_aug_06 = priors_1991_jul_14 + ["1991-08-01"]
+
+        # Act
+        _, v_1989 = format_njs_iso_version("1989-03-12", priors_empty)
+        _, v_1990 = format_njs_iso_version("1990-11-12", priors_1990)
+        _, v_1991_03 = format_njs_iso_version("1991-03-15", ["1991-07-15T09"])
+        _, v_1991_07 = format_njs_iso_version("1991-07-15T09", priors_1991_jul_09)
+        _, v_1991_07_15t14 = format_njs_iso_version("1991-07-15T14", priors_1991_jul_14)
+        _, v_1991_08 = format_njs_iso_version("1991-08-01", priors_1991_aug_01)
+        _, v_1991_08_06 = format_njs_iso_version("1991-08-06", priors_1991_aug_06)
+        invalid_no_leading_zero, _, _ = parse_njs_iso_version("v1991-8-6")
+
+        # Assert
+        self.assertEqual(v_1989, "v1989")
+        self.assertEqual(v_1990, "v1990")
+        self.assertEqual(v_1991_03, "v1991-03")
+        self.assertEqual(v_1991_07, "v1991-07")
+        self.assertEqual(v_1991_07_15t14, "v1991-07-15T14")
+        self.assertEqual(v_1991_08, "v1991-08")
+        self.assertEqual(v_1991_08_06, "v1991-08-06")
+        self.assertFalse(invalid_no_leading_zero)
+        self.assertTrue(is_version_up_to_date("v2026", "v2025"))
+        self.assertFalse(is_version_up_to_date("v2026", "v2026-12"))
+        self.assertFalse(is_version_up_to_date("v1991-07", "v1991-07-15T14"))
+
+    def test_check_all_system_versions_detects_outdated_njs_iso_version(self) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = TrailConfig(
+                base_url="http://localhost:8080",
+                db_path=root / "trail.db",
+                seeds_path=root / "seeds.txt",
+                host="127.0.0.1",
+                port=8080,
+                max_hop_depth=1,
+                max_pages_per_domain=10,
+                crawl_delay_seconds=1,
+                crawl_batch_size=5,
+                crawl_interval_seconds=30,
+                results_per_page=10,
+                user_agent="TRAIL/v2026",
+            )
+
+            def _mock_fetcher(
+                url: str, _ua: str, _max_b: int
+            ) -> Tuple[int, str, Dict[str, str], bytes]:
+                if "nathan-sharp/trail" in url:
+                    return (
+                        200,
+                        url,
+                        {"content-type": "application/json"},
+                        b'{"tag_name": "v2026-12"}',
+                    )
+                if "cloudflare/cloudflared" in url:
+                    return (
+                        200,
+                        url,
+                        {"content-type": "application/json"},
+                        b'{"tag_name": "2026.11.0"}',
+                    )
+                return (404, url, {}, b"")
+
+            def _mock_runner(cmd: List[str]) -> Tuple[int, str]:
+                if cmd == ["apt-get", "-s", "upgrade"]:
+                    return (0, "2 upgraded, 0 newly installed, 0 to remove.")
+                return (0, "")
+
+            # Act
+            api_url = derive_github_release_api_url(config.repo_url)
+            report = check_all_system_versions(
+                config=config,
+                installed_cloudflared="2024.11.1",
+                resolver=_stub_public_resolver,
+                fetcher=_mock_fetcher,
+                runner=_mock_runner,
+            )
+
+            # Assert
+            self.assertEqual(
+                api_url,
+                "https://api.github.com/repos/nathan-sharp/trail/releases/latest",
+            )
+            self.assertFalse(report.all_up_to_date)
+            self.assertEqual(report.components[0].installed_version, "v2026")
+            self.assertEqual(report.components[0].latest_version, "v2026-12")
+            self.assertFalse(report.components[0].is_up_to_date)
+            self.assertEqual(report.components[1].latest_version, "2026.11.0")
+            self.assertFalse(report.components[1].is_up_to_date)
+            self.assertEqual(report.components[2].installed_version, "2 pending")
+            self.assertFalse(report.components[2].is_up_to_date)
+
+    def test_update_monitor_triggers_auto_update_and_renders_html20_status(self) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = TrailConfig(
+                base_url="http://localhost:8080",
+                db_path=root / "trail.db",
+                seeds_path=root / "seeds.txt",
+                host="127.0.0.1",
+                port=8080,
+                max_hop_depth=1,
+                max_pages_per_domain=10,
+                crawl_delay_seconds=1,
+                crawl_batch_size=5,
+                crawl_interval_seconds=30,
+                results_per_page=10,
+                user_agent="TRAIL/v2026",
+                auto_update_enabled=True,
+            )
+            storage = TrailStorage(config.db_path)
+            monitor = TrailUpdateMonitor(config)
+            executed_cmds: List[List[str]] = []
+
+            def _mock_fetcher(
+                url: str, _ua: str, _max_b: int
+            ) -> Tuple[int, str, Dict[str, str], bytes]:
+                return (
+                    200,
+                    url,
+                    {"content-type": "application/json"},
+                    b'{"tag_name": "v2026-12-01"}',
+                )
+
+            def _mock_runner(cmd: List[str]) -> Tuple[int, str]:
+                executed_cmds.append(cmd)
+                if cmd == ["apt-get", "-s", "upgrade"]:
+                    return (0, "1 upgraded, 0 newly installed.")
+                return (0, "ok")
+
+            # Act
+            monitor.refresh(
+                resolver=_stub_public_resolver,
+                fetcher=_mock_fetcher,
+                runner=_mock_runner,
+            )
+            status_code, _, html_bytes = dispatch_get_request(
+                "/status", config, storage, monitor
+            )
+            html_text = html_bytes.decode("utf-8")
+
+            # Assert
+            self.assertEqual(status_code, 200)
+            self.assertIn('<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">', html_text)
+            self.assertIn("UPDATE_AVAILABLE", html_text)
+            self.assertIn("v2026-12-01", html_text)
+            self.assertIn("AUTO_UPDATE (git:ok, apt:upgraded)", html_text)
+            self.assertIn(
+                ["git", "pull", "--ff-only", "https://github.com/nathan-sharp/trail"],
+                executed_cmds,
+            )
+
+    def test_apply_system_updates_blocks_ssrf_repo_url(self) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = TrailConfig(
+                base_url="http://localhost:8080",
+                db_path=root / "trail.db",
+                seeds_path=root / "seeds.txt",
+                host="127.0.0.1",
+                port=8080,
+                max_hop_depth=1,
+                max_pages_per_domain=10,
+                crawl_delay_seconds=1,
+                crawl_batch_size=5,
+                crawl_interval_seconds=30,
+                results_per_page=10,
+                user_agent="TRAIL/v2026",
+                repo_url="http://internal.corp/trail.git",
+                auto_update_enabled=True,
+            )
+
+            # Act
+            ok, msg = apply_system_updates(
+                config, resolver=_stub_public_resolver, runner=lambda _c: (0, "")
+            )
+
+            # Assert
+            self.assertFalse(ok)
+            self.assertIn("Blocked invalid or non-public TRAIL_REPO_URL", msg)
+
+
 class TestTrailStorageAndCrawler(unittest.TestCase):
     """Verify SQLite FTS5 indexing, BM25 ranking, and open-hop crawling."""
 
@@ -461,7 +687,7 @@ class TestTrailStorageAndCrawler(unittest.TestCase):
                 crawl_batch_size=10,
                 crawl_interval_seconds=30,
                 results_per_page=10,
-                user_agent="TRAIL/1.0",
+                user_agent="TRAIL/v2026",
             )
             storage = TrailStorage(config.db_path)
 
@@ -534,7 +760,7 @@ class TestTrailHtml20AndOpenSearch(unittest.TestCase):
                 crawl_batch_size=5,
                 crawl_interval_seconds=30,
                 results_per_page=10,
-                user_agent="TRAIL/1.0",
+                user_agent="TRAIL/v2026",
             )
             storage = TrailStorage(config.db_path)
             storage.index_document(
@@ -556,6 +782,7 @@ class TestTrailHtml20AndOpenSearch(unittest.TestCase):
             self.assertNotIn("<script>", body_text.lower())
             self.assertNotIn("<style", body_text.lower())
             self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", body_text)
+            self.assertIn("TRAIL v2026 [UP_TO_DATE]", body_text)
             self.assertEqual(headers["X-Frame-Options"], "DENY")
 
     def test_opensearch_xml_endpoint_conforms_to_1_1_spec(self) -> None:
@@ -574,7 +801,7 @@ class TestTrailHtml20AndOpenSearch(unittest.TestCase):
                 crawl_batch_size=5,
                 crawl_interval_seconds=30,
                 results_per_page=10,
-                user_agent="TRAIL/1.0",
+                user_agent="TRAIL/v2026",
             )
             storage = TrailStorage(config.db_path)
 

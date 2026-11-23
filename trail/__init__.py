@@ -1,3 +1,7 @@
-"""TRAIL (Text Retrieval & Automated Indexing Library) core package."""
+"""TRAIL (Text Retrieval & Automated Indexing Library) core package.
 
-__version__ = "1.0.0"
+Uses NJS ISO Timestamp Versioning (https://njs.dev/other/versioning/).
+"""
+
+__release_utc__ = "2026-11-23T14:19:46Z"
+__version__ = "v2026"

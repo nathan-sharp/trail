@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      pull: true
     container_name: trail-server
     restart: unless-stopped
     read_only: true
@@ -29,6 +30,10 @@ services:
       TRAIL_USB_DEVICE: "${TRAIL_USB_DEVICE:-}"
       TRAIL_MIN_USB_GB: "${TRAIL_MIN_USB_GB:-500}"
       TRAIL_AUTO_FORMAT: "${TRAIL_AUTO_FORMAT:-true}"
+      TRAIL_REPO_URL: "${TRAIL_REPO_URL:-https://github.com/nathan-sharp/trail}"
+      TRAIL_VERSION_MANIFEST_URL: "${TRAIL_VERSION_MANIFEST_URL:-}"
+      TRAIL_UPDATE_CHECK_INTERVAL_SECONDS: "${TRAIL_UPDATE_CHECK_INTERVAL_SECONDS:-21600}"
+      TRAIL_AUTO_UPDATE: "false"
       TRAIL_MAX_HOP_DEPTH: "${TRAIL_MAX_HOP_DEPTH:-2}"
       TRAIL_MAX_PAGES_PER_DOMAIN: "${TRAIL_MAX_PAGES_PER_DOMAIN:-50}"
       TRAIL_CRAWL_DELAY_SECONDS: "${TRAIL_CRAWL_DELAY_SECONDS:-2}"
@@ -43,7 +48,8 @@ services:
       - trail_internal
 
   cloudflared:
-    image: cloudflare/cloudflared:2024.11.1
+    image: cloudflare/cloudflared:latest
+    pull_policy: always
     container_name: trail-cloudflared
     restart: unless-stopped
     read_only: true
@@ -60,6 +66,31 @@ services:
       - run
       - --token
       - "${CLOUDFLARE_TUNNEL_TOKEN:-}"
+    networks:
+      - trail_internal
+
+  trail-updater:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trail-updater
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cpus: 0.5
+    mem_limit: 256m
+    depends_on:
+      trail:
+        condition: service_healthy
+    environment:
+      TRAIL_REPO_URL: "${TRAIL_REPO_URL:-https://github.com/nathan-sharp/trail}"
+      TRAIL_VERSION_MANIFEST_URL: "${TRAIL_VERSION_MANIFEST_URL:-}"
+      TRAIL_UPDATE_CHECK_INTERVAL_SECONDS: "${TRAIL_UPDATE_CHECK_INTERVAL_SECONDS:-21600}"
+      TRAIL_AUTO_UPDATE: "${TRAIL_AUTO_UPDATE:-true}"
+    volumes:
+      - ".:/app:rw"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    command: ["python", "-m", "trail.updater"]
     networks:
       - trail_internal
 

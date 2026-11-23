@@ -2,14 +2,17 @@
 
 import html
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, quote_plus, urlparse
 
+from trail import __version__ as TRAIL_VERSION
 from trail.config import TrailConfig
 from trail.storage import SearchResult, TrailStorage
+from trail.updater import SystemUpdateReport, TrailUpdateMonitor
 
 MAX_RENDERED_RESULTS: int = 50
 MAX_PAGE_NUMBER: int = 100
+MAX_COMPONENTS_DISPLAY: int = 16
 
 
 def _escape_html(text: str) -> str:
@@ -81,6 +84,34 @@ def _render_pagination(query: str, page: int, per_page: int, total: int) -> str:
     return "".join(nav_parts)
 
 
+def render_html20_status_page(report: SystemUpdateReport) -> str:
+    """Render an RFC 1866 HTML 2.0 system version and update report."""
+    assert isinstance(report, SystemUpdateReport), "report required"
+    overall = "UP_TO_DATE" if report.all_up_to_date else "UPDATE_AVAILABLE"
+    action = _escape_html(report.last_update_action)
+    lines: List[str] = [
+        '<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">\n',
+        "<HTML>\n<HEAD>\n<TITLE>TRAIL System Version Status</TITLE>\n</HEAD>\n<BODY>\n",
+        "<H1>TRAIL System Version Status</H1>\n",
+        f"<P>Overall Compliance: <B>{overall}</B> | Last Action: {action}</P>\n",
+        "<HR>\n<DL>\n",
+    ]
+    bound = min(len(report.components), MAX_COMPONENTS_DISPLAY)
+    for idx in range(bound):
+        comp = report.components[idx]
+        c_name = _escape_html(comp.name)
+        c_inst = _escape_html(comp.installed_version)
+        c_lat = _escape_html(comp.latest_version)
+        c_stat = _escape_html(comp.status_label)
+        lines.append(f"  <DT><B>{c_name}</B> [{c_stat}]</DT>\n")
+        lines.append(
+            f"  <DD>Installed Version: {c_inst} | Latest Version: {c_lat}</DD>\n"
+        )
+    lines.append("</DL>\n<HR>\n")
+    lines.append('<P><A HREF="/">Return to TRAIL Search</A></P>\n</BODY>\n</HTML>\n')
+    return "".join(lines)
+
+
 def render_html20_search_page(
     query: str,
     page: int,
@@ -90,9 +121,12 @@ def render_html20_search_page(
     indexed_docs: int,
     pending_queue: int,
     error_message: str = "",
+    version_badge: str = "UP_TO_DATE",
 ) -> str:
     """Render a strict RFC 1866 HTML 2.0 search interface without CSS or JS."""
     safe_q = _escape_html(query)
+    safe_badge = _escape_html(version_badge)
+    safe_ver = _escape_html(TRAIL_VERSION)
     header = (
         '<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">\n'
         "<HTML>\n"
@@ -125,10 +159,13 @@ def render_html20_search_page(
     else:
         body_section = "<P>Enter search terms above and press Search.</P>\n"
 
+    ver_label = safe_ver if safe_ver.startswith("v") else f"v{safe_ver}"
     footer = (
         "<HR>\n"
-        f"<P>Index Status: {indexed_docs} documents indexed | "
+        f"<P>TRAIL {ver_label} [{safe_badge}] | "
+        f"Index Status: {indexed_docs} documents indexed | "
         f"{pending_queue} URLs queued | "
+        '<A HREF="/status">Version Status</A> | '
         '<A HREF="/opensearch.xml">OpenSearch 1.1 XML</A></P>\n'
         "</BODY>\n"
         "</HTML>\n"
@@ -153,7 +190,10 @@ def parse_page_param(raw_values: List[str]) -> Tuple[bool, int]:
 
 
 def dispatch_get_request(
-    request_target: str, config: TrailConfig, storage: TrailStorage
+    request_target: str,
+    config: TrailConfig,
+    storage: TrailStorage,
+    update_monitor: Optional[TrailUpdateMonitor] = None,
 ) -> Tuple[int, Dict[str, str], bytes]:
     """Pure HTTP GET dispatcher returning (status_code, headers, body_bytes)."""
     assert isinstance(request_target, str), "request_target must be a string"
@@ -177,10 +217,30 @@ def dispatch_get_request(
         headers["Content-Type"] = "application/opensearchdescription+xml; charset=utf-8"
         return (200, headers, xml_body)
 
+    active_monitor = (
+        update_monitor if update_monitor is not None else TrailUpdateMonitor(config)
+    )
+    report = active_monitor.get_report()
+    badge = "UP_TO_DATE" if report.all_up_to_date else "UPDATE_AVAILABLE"
+
+    if path == "/status":
+        status_html = render_html20_status_page(report).encode("utf-8")
+        headers = dict(base_headers)
+        headers["Content-Type"] = "text/html; charset=utf-8"
+        return (200, headers, status_html)
+
     if path not in ("/", "/search"):
         docs, pending = storage.get_index_counts()
         not_found = render_html20_search_page(
-            "", 1, config.results_per_page, 0, [], docs, pending, "Path not found."
+            "",
+            1,
+            config.results_per_page,
+            0,
+            [],
+            docs,
+            pending,
+            "Path not found.",
+            badge,
         ).encode("utf-8")
         headers = dict(base_headers)
         headers["Content-Type"] = "text/html; charset=utf-8"
@@ -201,6 +261,7 @@ def dispatch_get_request(
             docs,
             pending,
             "Page parameter must be an integer between 1 and 100.",
+            badge,
         ).encode("utf-8")
         headers = dict(base_headers)
         headers["Content-Type"] = "text/html; charset=utf-8"
@@ -208,7 +269,7 @@ def dispatch_get_request(
 
     if not raw_q.strip():
         home_body = render_html20_search_page(
-            "", 1, config.results_per_page, 0, [], docs, pending
+            "", 1, config.results_per_page, 0, [], docs, pending, "", badge
         ).encode("utf-8")
         headers = dict(base_headers)
         headers["Content-Type"] = "text/html; charset=utf-8"
@@ -225,13 +286,22 @@ def dispatch_get_request(
             docs,
             pending,
             "Query contains invalid characters or exceeds 200 characters.",
+            badge,
         ).encode("utf-8")
         headers = dict(base_headers)
         headers["Content-Type"] = "text/html; charset=utf-8"
         return (400, headers, bad_q)
 
     html_body = render_html20_search_page(
-        raw_q.strip(), page_num, config.results_per_page, total, results, docs, pending
+        raw_q.strip(),
+        page_num,
+        config.results_per_page,
+        total,
+        results,
+        docs,
+        pending,
+        "",
+        badge,
     ).encode("utf-8")
     headers = dict(base_headers)
     headers["Content-Type"] = "text/html; charset=utf-8"
@@ -244,6 +314,7 @@ class TrailHttpHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
     trail_config: TrailConfig
     trail_storage: TrailStorage
+    trail_update_monitor: Optional[TrailUpdateMonitor] = None
 
     def log_message(self, format: str, *args) -> None:
         """Disable client IP and search query logging (revDSG/GDPR compliance)."""
@@ -253,7 +324,10 @@ class TrailHttpHandler(BaseHTTPRequestHandler):
         """Handle HTTP GET requests with fail-closed error handling."""
         try:
             status, headers, payload = dispatch_get_request(
-                self.path, self.trail_config, self.trail_storage
+                self.path,
+                self.trail_config,
+                self.trail_storage,
+                self.trail_update_monitor,
             )
             self.send_response(status)
             for key, val in headers.items():
@@ -277,7 +351,10 @@ class TrailHttpHandler(BaseHTTPRequestHandler):
         """Handle HTTP HEAD requests identically to GET without body."""
         try:
             status, headers, payload = dispatch_get_request(
-                self.path, self.trail_config, self.trail_storage
+                self.path,
+                self.trail_config,
+                self.trail_storage,
+                self.trail_update_monitor,
             )
             self.send_response(status)
             for key, val in headers.items():
@@ -290,12 +367,15 @@ class TrailHttpHandler(BaseHTTPRequestHandler):
 
 
 def create_http_server(
-    config: TrailConfig, storage: TrailStorage
+    config: TrailConfig,
+    storage: TrailStorage,
+    update_monitor: Optional[TrailUpdateMonitor] = None,
 ) -> ThreadingHTTPServer:
     """Create a configured ThreadingHTTPServer instance."""
 
     class _BoundHandler(TrailHttpHandler):
         trail_config = config
         trail_storage = storage
+        trail_update_monitor = update_monitor
 
     return ThreadingHTTPServer((config.host, config.port), _BoundHandler)

@@ -1,4 +1,4 @@
-"""Main process orchestrator for TRAIL drive setup, privilege drop, and HTTP 2.0 server."""
+"""Main process orchestrator for TRAIL drive setup, privilege drop, version checks, and server."""
 
 import os
 from pathlib import Path
@@ -11,6 +11,7 @@ from trail.crawler import TrailCrawler
 from trail.disk import TRAIL_GID, TRAIL_UID, setup_external_drive
 from trail.server import create_http_server
 from trail.storage import TrailStorage
+from trail.updater import TrailUpdateMonitor
 
 MAX_CRAWL_CYCLES: int = 10000000
 
@@ -64,8 +65,27 @@ def _crawler_loop(
             break
 
 
+def _update_monitor_loop(
+    monitor: TrailUpdateMonitor,
+    config: TrailConfig,
+    stop_event: threading.Event,
+    max_cycles: int = MAX_CRAWL_CYCLES,
+) -> None:
+    """Run bounded version audits at fixed intervals until stop_event is set."""
+    assert max_cycles >= 1, "max_cycles must be >= 1"
+    for _ in range(max_cycles):
+        if stop_event.is_set():
+            break
+        try:
+            monitor.refresh()
+        except Exception:
+            pass
+        if stop_event.wait(timeout=float(config.update_check_interval_seconds)):
+            break
+
+
 def main() -> int:
-    """Initialize external drive, drop privileges, and start crawler and server."""
+    """Initialize external drive, drop privileges, and start crawler, updater, and server."""
     workspace_root = Path(__file__).resolve().parent.parent
     config = load_config_from_env(workspace_root)
 
@@ -75,17 +95,26 @@ def main() -> int:
     storage = TrailStorage(config.db_path)
     crawler = TrailCrawler(config, storage, workspace_root)
     crawler.load_seeds_into_queue()
+    update_monitor = TrailUpdateMonitor(config)
 
     stop_event = threading.Event()
-    worker = threading.Thread(
+    crawler_worker = threading.Thread(
         target=_crawler_loop,
         args=(crawler, config, stop_event),
         name="trail-crawler-worker",
         daemon=True,
     )
-    worker.start()
+    crawler_worker.start()
 
-    httpd = create_http_server(config, storage)
+    update_worker = threading.Thread(
+        target=_update_monitor_loop,
+        args=(update_monitor, config, stop_event),
+        name="trail-update-monitor",
+        daemon=True,
+    )
+    update_worker.start()
+
+    httpd = create_http_server(config, storage, update_monitor)
 
     def _handle_signal(signum: int, _frame) -> None:
         stop_event.set()

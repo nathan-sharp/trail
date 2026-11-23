@@ -5,8 +5,14 @@ import os
 from pathlib import Path
 from typing import List, Tuple
 
+from trail import __version__ as TRAIL_VERSION
+
 MAX_SEED_LINES: int = 1000
 MAX_LINE_CHARS: int = 2048
+DEFAULT_TRAIL_REPO_URL: str = "https://github.com/nathan-sharp/trail"
+DEFAULT_CLOUDFLARED_API: str = (
+    "https://api.github.com/repos/cloudflare/cloudflared/releases/latest"
+)
 
 
 @dataclass(frozen=True)
@@ -25,6 +31,11 @@ class TrailConfig:
     crawl_interval_seconds: int
     results_per_page: int
     user_agent: str
+    repo_url: str = DEFAULT_TRAIL_REPO_URL
+    version_manifest_url: str = ""
+    cloudflared_release_url: str = DEFAULT_CLOUDFLARED_API
+    update_check_interval_seconds: int = 21600
+    auto_update_enabled: bool = True
 
 
 def validate_confined_path(base_dir: Path, target_path: Path) -> Tuple[bool, Path]:
@@ -74,6 +85,17 @@ def load_config_from_env(workspace_root: Path) -> TrailConfig:
     if not ok_seeds:
         safe_seeds = (workspace_root / "config" / "seeds.txt").resolve()
 
+    auto_upd_raw = os.environ.get("TRAIL_AUTO_UPDATE", "true").strip().lower()
+    auto_upd = auto_upd_raw in ("1", "true", "yes")
+    cf_url = (
+        os.environ.get("TRAIL_CLOUDFLARED_RELEASE_URL", DEFAULT_CLOUDFLARED_API).strip()
+        or DEFAULT_CLOUDFLARED_API
+    )
+    repo_url = (
+        os.environ.get("TRAIL_REPO_URL", DEFAULT_TRAIL_REPO_URL).strip()
+        or DEFAULT_TRAIL_REPO_URL
+    )
+
     return TrailConfig(
         base_url=base_url,
         db_path=safe_db,
@@ -96,7 +118,17 @@ def load_config_from_env(workspace_root: Path) -> TrailConfig:
         results_per_page=_parse_bounded_int(
             os.environ.get("TRAIL_RESULTS_PER_PAGE", "10"), 10, 1, 50
         ),
-        user_agent="TRAIL/1.0 (+Self-Hosted-HTML2-Search)",
+        user_agent=f"TRAIL/{TRAIL_VERSION} (+https://github.com/nathan-sharp/trail)",
+        repo_url=repo_url,
+        version_manifest_url=os.environ.get("TRAIL_VERSION_MANIFEST_URL", "").strip(),
+        cloudflared_release_url=cf_url,
+        update_check_interval_seconds=_parse_bounded_int(
+            os.environ.get("TRAIL_UPDATE_CHECK_INTERVAL_SECONDS", "21600"),
+            21600,
+            60,
+            604800,
+        ),
+        auto_update_enabled=auto_upd,
     )
 
 

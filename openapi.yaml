@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: TRAIL (Text Retrieval & Automated Indexing Library) API
-  version: 1.0.0
+  version: v2026
   summary: Self-hosted HTML 2.0 search engine and OpenSearch 1.1 provider.
   description: >-
     API specification for TRAIL. Complies with HTML 2.0 (RFC 1866) form
@@ -43,6 +43,17 @@ paths:
           $ref: '#/components/responses/Html20PageResponse'
         '400':
           $ref: '#/components/responses/Html20BadRequestResponse'
+        '500':
+          $ref: '#/components/responses/Html20ServerErrorResponse'
+  /status:
+    get:
+      operationId: getSystemVersionStatus
+      summary: Render HTML 2.0 version compliance report for TRAIL and all subsystems
+      security:
+        - PublicReadAccess: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Html20PageResponse'
         '500':
           $ref: '#/components/responses/Html20ServerErrorResponse'
   /opensearch.xml:
@@ -126,7 +137,7 @@ components:
         Content-Type:
           schema:
             type: string
-            const: text/html; charset=iso-8859-1
+            const: text/html; charset=utf-8
       content:
         text/html:
           schema:
