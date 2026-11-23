@@ -598,7 +598,8 @@ class TestTrailVersionAndAutoUpdate(unittest.TestCase):
             # Assert
             self.assertEqual(status_code, 200)
             self.assertIn('<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">', html_text)
-            self.assertIn("UPDATE_AVAILABLE", html_text)
+            self.assertNotIn("[UP_TO_DATE]", html_text)
+            self.assertNotIn("[UPDATE_AVAILABLE]", html_text)
             self.assertIn("v2026-12-01", html_text)
             self.assertIn("AUTO_UPDATE (git:ok, apt:upgraded)", html_text)
             self.assertIn(
@@ -798,7 +799,8 @@ class TestTrailHtml20AndOpenSearch(unittest.TestCase):
             self.assertNotIn("<script>", body_text.lower())
             self.assertNotIn("<style", body_text.lower())
             self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", body_text)
-            self.assertIn("TRAIL v2026 [UP_TO_DATE]", body_text)
+            self.assertIn("TRAIL v2026 |", body_text)
+            self.assertNotIn("[UP_TO_DATE]", body_text)
             self.assertEqual(headers["X-Frame-Options"], "DENY")
 
     def test_opensearch_xml_endpoint_conforms_to_1_1_spec(self) -> None:

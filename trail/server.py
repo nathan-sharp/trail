@@ -85,15 +85,14 @@ def _render_pagination(query: str, page: int, per_page: int, total: int) -> str:
 
 
 def render_html20_status_page(report: SystemUpdateReport) -> str:
-    """Render an RFC 1866 HTML 2.0 system version and update report."""
+    """Render an RFC 1866 HTML 2.0 system version report without status brackets."""
     assert isinstance(report, SystemUpdateReport), "report required"
-    overall = "UP_TO_DATE" if report.all_up_to_date else "UPDATE_AVAILABLE"
     action = _escape_html(report.last_update_action)
     lines: List[str] = [
         '<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">\n',
         "<HTML>\n<HEAD>\n<TITLE>TRAIL System Version Status</TITLE>\n</HEAD>\n<BODY>\n",
         "<H1>TRAIL System Version Status</H1>\n",
-        f"<P>Overall Compliance: <B>{overall}</B> | Last Action: {action}</P>\n",
+        f"<P>Last Action: {action}</P>\n",
         "<HR>\n<DL>\n",
     ]
     bound = min(len(report.components), MAX_COMPONENTS_DISPLAY)
@@ -102,8 +101,7 @@ def render_html20_status_page(report: SystemUpdateReport) -> str:
         c_name = _escape_html(comp.name)
         c_inst = _escape_html(comp.installed_version)
         c_lat = _escape_html(comp.latest_version)
-        c_stat = _escape_html(comp.status_label)
-        lines.append(f"  <DT><B>{c_name}</B> [{c_stat}]</DT>\n")
+        lines.append(f"  <DT><B>{c_name}</B></DT>\n")
         lines.append(
             f"  <DD>Installed Version: {c_inst} | Latest Version: {c_lat}</DD>\n"
         )
@@ -121,11 +119,9 @@ def render_html20_search_page(
     indexed_docs: int,
     pending_queue: int,
     error_message: str = "",
-    version_badge: str = "UP_TO_DATE",
 ) -> str:
     """Render a strict RFC 1866 HTML 2.0 search interface without CSS or JS."""
     safe_q = _escape_html(query)
-    safe_badge = _escape_html(version_badge)
     safe_ver = _escape_html(TRAIL_VERSION)
     header = (
         '<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">\n'
@@ -162,7 +158,7 @@ def render_html20_search_page(
     ver_label = safe_ver if safe_ver.startswith("v") else f"v{safe_ver}"
     footer = (
         "<HR>\n"
-        f"<P>TRAIL {ver_label} [{safe_badge}] | "
+        f"<P>TRAIL {ver_label} | "
         f"Index Status: {indexed_docs} documents indexed | "
         f"{pending_queue} URLs queued | "
         '<A HREF="/status">Version Status</A> | '
@@ -221,7 +217,6 @@ def dispatch_get_request(
         update_monitor if update_monitor is not None else TrailUpdateMonitor(config)
     )
     report = active_monitor.get_report()
-    badge = "UP_TO_DATE" if report.all_up_to_date else "UPDATE_AVAILABLE"
 
     if path == "/status":
         status_html = render_html20_status_page(report).encode("utf-8")
@@ -240,7 +235,6 @@ def dispatch_get_request(
             docs,
             pending,
             "Path not found.",
-            badge,
         ).encode("utf-8")
         headers = dict(base_headers)
         headers["Content-Type"] = "text/html; charset=utf-8"
@@ -261,7 +255,6 @@ def dispatch_get_request(
             docs,
             pending,
             "Page parameter must be an integer between 1 and 100.",
-            badge,
         ).encode("utf-8")
         headers = dict(base_headers)
         headers["Content-Type"] = "text/html; charset=utf-8"
@@ -269,7 +262,7 @@ def dispatch_get_request(
 
     if not raw_q.strip():
         home_body = render_html20_search_page(
-            "", 1, config.results_per_page, 0, [], docs, pending, "", badge
+            "", 1, config.results_per_page, 0, [], docs, pending
         ).encode("utf-8")
         headers = dict(base_headers)
         headers["Content-Type"] = "text/html; charset=utf-8"
@@ -286,7 +279,6 @@ def dispatch_get_request(
             docs,
             pending,
             "Query contains invalid characters or exceeds 200 characters.",
-            badge,
         ).encode("utf-8")
         headers = dict(base_headers)
         headers["Content-Type"] = "text/html; charset=utf-8"
@@ -300,8 +292,6 @@ def dispatch_get_request(
         results,
         docs,
         pending,
-        "",
-        badge,
     ).encode("utf-8")
     headers = dict(base_headers)
     headers["Content-Type"] = "text/html; charset=utf-8"
