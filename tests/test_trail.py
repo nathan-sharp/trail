@@ -636,6 +636,19 @@ class TestTrailVersionAndAutoUpdate(unittest.TestCase):
             self.assertFalse(ok)
             self.assertIn("Blocked invalid or non-public TRAIL_REPO_URL", msg)
 
+    def test_install_sh_enforces_strict_mode_and_input_allowlists(self) -> None:
+        # Arrange
+        script_path = Path(__file__).resolve().parent.parent / "install.sh"
+
+        # Act
+        script_text = script_path.read_text(encoding="utf-8")
+
+        # Assert
+        self.assertIn("set -euo pipefail", script_text)
+        self.assertIn("https://github.com/nathan-sharp/trail.git", script_text)
+        self.assertIn("chmod 600 .env", script_text)
+        self.assertIn("docker compose up -d --build", script_text)
+
 
 class TestTrailStorageAndCrawler(unittest.TestCase):
     """Verify SQLite FTS5 indexing, BM25 ranking, and open-hop crawling."""
