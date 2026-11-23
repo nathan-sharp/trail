@@ -12,6 +12,7 @@ from typing import Callable, List, Optional, Tuple
 MIN_USB_CAPACITY_BYTES: int = 500_000_000_000  # 500 GB in SI bytes (5.0 * 10^11 B)
 MAX_BLOCK_DEVICES: int = 64
 MAX_PARTITIONS_PER_DISK: int = 32
+MAX_BLKID_LINES: int = 32
 TRAIL_UID: int = 10001
 TRAIL_GID: int = 10001
 TRAIL_FS_LABEL: str = "TRAIL_DATA"
@@ -268,28 +269,58 @@ def select_target_usb_partition(
     return (False, None, "No non-boot USB disk >= 500 GB detected")
 
 
+def _probe_superblock_blkid(
+    dev_path: str, runner: CommandRunner
+) -> Tuple[str, str]:
+    """Directly probe block device superblock via blkid (bypasses missing container udev)."""
+    assert isinstance(dev_path, str) and len(dev_path) > 0, "dev_path required"
+    code, output = runner(["blkid", "-o", "export", dev_path])
+    if code != 0 or not output:
+        return ("", "")
+    fstype = ""
+    label = ""
+    lines = output.splitlines()
+    bound = min(len(lines), MAX_BLKID_LINES)
+    for idx in range(bound):
+        line = lines[idx].strip()
+        if line.startswith("TYPE="):
+            fstype = line[5:].strip().lower()
+        elif line.startswith("LABEL="):
+            label = line[6:].strip()
+    return (fstype, label)
+
+
 def _provision_and_format_partition(
     partition: BlockPartition,
     auto_format: bool,
     runner: CommandRunner,
 ) -> Tuple[bool, str, str]:
-    """Partition raw disk if needed and format as ext4 with label TRAIL_DATA.
+    """Partition raw disk if needed and format as ext4 ONLY if not already ext4/TRAIL_DATA.
 
     Returns (ok, target_partition_path, status_message).
     """
     assert isinstance(partition, BlockPartition), "partition must be a BlockPartition"
     target_path = partition.path
-    is_initialized = (
-        partition.fstype == "ext4" and partition.label == TRAIL_FS_LABEL
-    )
-    if is_initialized:
-        return (True, target_path, f"Verified existing {TRAIL_FS_LABEL} ext4 volume")
+    eff_fstype = partition.fstype
+    eff_label = partition.label
 
-    needs_format = (not partition.fstype) or (
-        auto_format and partition.label != TRAIL_FS_LABEL
+    if not eff_fstype or not eff_label:
+        probed_fs, probed_lbl = _probe_superblock_blkid(target_path, runner)
+        eff_fstype = eff_fstype or probed_fs
+        eff_label = eff_label or probed_lbl
+
+    if eff_fstype == "ext4" or eff_label == TRAIL_FS_LABEL:
+        return (
+            True,
+            target_path,
+            f"Preserved existing ext4 volume ({eff_label or target_path})",
+        )
+
+    needs_format = (not eff_fstype) or (
+        auto_format and eff_label != TRAIL_FS_LABEL
     )
     if not needs_format:
-        return (True, target_path, f"Using existing {partition.fstype} volume")
+        return (True, target_path, f"Using existing {eff_fstype} volume")
 
     if not auto_format:
         return (
@@ -322,6 +353,13 @@ def _provision_and_format_partition(
                 if partition.path[-1].isdigit()
                 else f"{partition.path}1"
             )
+            probed_fs2, probed_lbl2 = _probe_superblock_blkid(target_path, runner)
+            if probed_fs2 == "ext4" or probed_lbl2 == TRAIL_FS_LABEL:
+                return (
+                    True,
+                    target_path,
+                    f"Preserved existing ext4 volume on {target_path}",
+                )
         else:
             target_path = partition.path
 
@@ -341,7 +379,7 @@ def setup_external_drive(
     lsblk_provider: Optional[LsblkProvider] = None,
     runner: Optional[CommandRunner] = None,
 ) -> Tuple[bool, str]:
-    """Auto-detect, format if uninitialized, mount, and set UID 10001 ownership."""
+    """Auto-detect, format ONLY if not yet ext4/TRAIL_DATA, mount, and set UID 10001."""
     assert isinstance(target_dir, Path), "target_dir must be a Path"
     active_lsblk = lsblk_provider if lsblk_provider is not None else default_lsblk_provider
     active_runner = runner if runner is not None else default_command_runner

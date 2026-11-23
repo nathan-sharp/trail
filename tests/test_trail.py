@@ -382,6 +382,7 @@ class TestTrailDiskAutomation(unittest.TestCase):
             self.assertEqual(
                 executed_cmds,
                 [
+                    ["blkid", "-o", "export", "/dev/sdc"],
                     [
                         "parted",
                         "-s",
@@ -394,6 +395,7 @@ class TestTrailDiskAutomation(unittest.TestCase):
                         "1MiB",
                         "100%",
                     ],
+                    ["blkid", "-o", "export", "/dev/sdc1"],
                     ["mkfs.ext4", "-F", "-L", TRAIL_FS_LABEL, "/dev/sdc1"],
                     ["mount", "/dev/sdc1", str(target_dir)],
                 ],
@@ -423,10 +425,51 @@ class TestTrailDiskAutomation(unittest.TestCase):
 
             # Assert
             self.assertTrue(ok)
-            self.assertIn("Verified existing TRAIL_DATA ext4 volume", reason)
+            self.assertIn("Preserved existing ext4 volume (TRAIL_DATA)", reason)
             self.assertEqual(
                 executed_cmds,
                 [["mount", "/dev/sdc1", str(target_dir)]],
+            )
+
+    def test_setup_external_drive_preserves_data_via_blkid_when_lsblk_omits_udev_fields(
+        self,
+    ) -> None:
+        # Arrange
+        with tempfile.TemporaryDirectory() as tmp:
+            target_dir = Path(tmp) / "usb-mount"
+            executed_cmds: List[List[str]] = []
+
+            def _mock_runner(cmd: List[str]) -> Tuple[int, str]:
+                executed_cmds.append(cmd)
+                if cmd == ["blkid", "-o", "export", "/dev/sdc1"]:
+                    return (0, "DEVNAME=/dev/sdc1\nTYPE=ext4\nLABEL=TRAIL_DATA\n")
+                return (0, "ok")
+
+            # Act
+            ok, reason = setup_external_drive(
+                target_dir=target_dir,
+                override_device="",
+                min_capacity_bytes=MIN_USB_CAPACITY_BYTES,
+                auto_format=True,
+                lsblk_provider=lambda: _sample_lsblk_json(
+                    usb_fstype="", usb_label=""
+                ),
+                runner=_mock_runner,
+            )
+
+            # Assert
+            self.assertTrue(ok)
+            self.assertIn("Preserved existing ext4 volume (TRAIL_DATA)", reason)
+            self.assertNotIn(
+                ["mkfs.ext4", "-F", "-L", TRAIL_FS_LABEL, "/dev/sdc1"],
+                executed_cmds,
+            )
+            self.assertEqual(
+                executed_cmds,
+                [
+                    ["blkid", "-o", "export", "/dev/sdc1"],
+                    ["mount", "/dev/sdc1", str(target_dir)],
+                ],
             )
 
 
