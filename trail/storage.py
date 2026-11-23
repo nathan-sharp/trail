@@ -316,3 +316,20 @@ class TrailStorage:
             return (0, 0)
         finally:
             conn.close()
+
+    def get_stored_data_bytes(self) -> int:
+        """Return total on-disk bytes used by the SQLite database, WAL, and SHM files."""
+        total_bytes = 0
+        candidates = (
+            self._db_path,
+            Path(f"{self._db_path}-wal"),
+            Path(f"{self._db_path}-shm"),
+        )
+        for idx in range(len(candidates)):
+            path_item = candidates[idx]
+            try:
+                if path_item.is_file():
+                    total_bytes += int(path_item.stat().st_size)
+            except OSError:
+                continue
+        return max(0, total_bytes)

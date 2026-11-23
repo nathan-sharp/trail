@@ -47,8 +47,8 @@ paths:
           $ref: '#/components/responses/Html20ServerErrorResponse'
   /status:
     get:
-      operationId: getSystemVersionStatus
-      summary: Render HTML 2.0 version compliance report for TRAIL and all subsystems
+      operationId: getSystemAndIndexStatus
+      summary: Render HTML 2.0 index counts, stored data size, and subsystem versions
       security:
         - PublicReadAccess: []
       responses:

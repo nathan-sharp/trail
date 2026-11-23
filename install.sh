@@ -18,40 +18,49 @@ if [[ "${EUID}" -ne 0 ]]; then
     exit 1
 fi
 
-if [[ -z "${ARG_BASE_URL}" ]] && [[ -r /dev/tty ]]; then
-    read -r -p "Enter public Base URL [http://localhost:8080]: " ARG_BASE_URL < /dev/tty || true
-fi
-ARG_BASE_URL="$(printf '%s' "${ARG_BASE_URL:-http://localhost:8080}" | tr -d '\r' | xargs)"
-ARG_BASE_URL="${ARG_BASE_URL%/}"
-
-URL_REGEX='^https?://[A-Za-z0-9._:/-]+$'
-if [[ ! "${ARG_BASE_URL}" =~ ${URL_REGEX} ]]; then
-    echo "Error: TRAIL_BASE_URL failed allow-list validation (must be http:// or https:// hostname)." >&2
-    exit 1
+EXISTING_ENV="false"
+if [[ -f "${INSTALL_DIR}/.env" ]] && [[ -z "${ARG_BASE_URL}" ]] && [[ -z "${ARG_CF_TOKEN}" ]]; then
+    if ! grep -q "replace_with_your_cloudflare_tunnel_token" "${INSTALL_DIR}/.env"; then
+        EXISTING_ENV="true"
+    fi
 fi
 
-if [[ -z "${ARG_CF_TOKEN}" ]] && [[ -r /dev/tty ]]; then
-    echo "Tip: In Cloudflare, click the Copy button on the 'Run tunnel with Docker' box (not the Tunnel ID box)."
-    read -r -p "Paste the 'Run tunnel with Docker' command or eyJ... token (or press Enter for LAN-only): " ARG_CF_TOKEN < /dev/tty || true
-fi
-ARG_CF_TOKEN="$(printf '%s' "${ARG_CF_TOKEN:-}" | tr -d '\r')"
+if [[ "${EXISTING_ENV}" == "false" ]]; then
+    if [[ -z "${ARG_BASE_URL}" ]] && [[ -r /dev/tty ]]; then
+        read -r -p "Enter public Base URL [http://localhost:8080]: " ARG_BASE_URL < /dev/tty || true
+    fi
+    ARG_BASE_URL="$(printf '%s' "${ARG_BASE_URL:-http://localhost:8080}" | tr -d '\r' | xargs)"
+    ARG_BASE_URL="${ARG_BASE_URL%/}"
 
-if [[ "${ARG_CF_TOKEN}" == *"--token"* ]]; then
-    ARG_CF_TOKEN="$(printf '%s' "${ARG_CF_TOKEN}" | sed -E 's/.*--token[[:space:]]+([^[:space:]]+).*/\1/')"
-fi
-ARG_CF_TOKEN="$(printf '%s' "${ARG_CF_TOKEN}" | tr -d '[:space:]')"
+    URL_REGEX='^https?://[A-Za-z0-9._:/-]+$'
+    if [[ ! "${ARG_BASE_URL}" =~ ${URL_REGEX} ]]; then
+        echo "Error: TRAIL_BASE_URL failed allow-list validation (must be http:// or https:// hostname)." >&2
+        exit 1
+    fi
 
-UUID_REGEX='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-if [[ "${ARG_CF_TOKEN}" =~ ${UUID_REGEX} ]]; then
-    echo "Error: '${ARG_CF_TOKEN}' is the Tunnel ID (UUID), not the Tunnel Token." >&2
-    echo "In the Cloudflare screen, scroll down to 'Run tunnel with Docker', click the Copy button, and paste that instead." >&2
-    exit 1
-fi
+    if [[ -z "${ARG_CF_TOKEN}" ]] && [[ -r /dev/tty ]]; then
+        echo "Tip: In Cloudflare, click the Copy button on the 'Run tunnel with Docker' box (not the Tunnel ID box)."
+        read -r -p "Paste the 'Run tunnel with Docker' command or eyJ... token (or press Enter for LAN-only): " ARG_CF_TOKEN < /dev/tty || true
+    fi
+    ARG_CF_TOKEN="$(printf '%s' "${ARG_CF_TOKEN:-}" | tr -d '\r')"
 
-TOKEN_REGEX='^[A-Za-z0-9._/+=-]*$'
-if [[ ! "${ARG_CF_TOKEN}" =~ ${TOKEN_REGEX} ]]; then
-    echo "Error: CLOUDFLARE_TUNNEL_TOKEN contains disallowed characters." >&2
-    exit 1
+    if [[ "${ARG_CF_TOKEN}" == *"--token"* ]]; then
+        ARG_CF_TOKEN="$(printf '%s' "${ARG_CF_TOKEN}" | sed -E 's/.*--token[[:space:]]+([^[:space:]]+).*/\1/')"
+    fi
+    ARG_CF_TOKEN="$(printf '%s' "${ARG_CF_TOKEN}" | tr -d '[:space:]')"
+
+    UUID_REGEX='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    if [[ "${ARG_CF_TOKEN}" =~ ${UUID_REGEX} ]]; then
+        echo "Error: '${ARG_CF_TOKEN}' is the Tunnel ID (UUID), not the Tunnel Token." >&2
+        echo "In the Cloudflare screen, scroll down to 'Run tunnel with Docker', click the Copy button, and paste that instead." >&2
+        exit 1
+    fi
+
+    TOKEN_REGEX='^[A-Za-z0-9._/+=-]*$'
+    if [[ ! "${ARG_CF_TOKEN}" =~ ${TOKEN_REGEX} ]]; then
+        echo "Error: CLOUDFLARE_TUNNEL_TOKEN contains disallowed characters." >&2
+        exit 1
+    fi
 fi
 
 echo "[1/5] Installing prerequisite packages (git, curl, ca-certificates)..."
@@ -76,14 +85,16 @@ fi
 
 cd "${INSTALL_DIR}"
 
-echo "[4/5] Writing configuration to ${INSTALL_DIR}/.env (mode 0600)..."
+echo "[4/5] Checking configuration at ${INSTALL_DIR}/.env (mode 0600)..."
 if [[ ! -f ".env" ]]; then
     cp .env.example .env
 fi
 chmod 600 .env
-sed -i "s|^TRAIL_BASE_URL=.*|TRAIL_BASE_URL=${ARG_BASE_URL}|" .env
-if [[ -n "${ARG_CF_TOKEN}" ]]; then
-    sed -i "s|^CLOUDFLARE_TUNNEL_TOKEN=.*|CLOUDFLARE_TUNNEL_TOKEN=${ARG_CF_TOKEN}|" .env
+if [[ "${EXISTING_ENV}" == "false" ]]; then
+    sed -i "s|^TRAIL_BASE_URL=.*|TRAIL_BASE_URL=${ARG_BASE_URL}|" .env
+    if [[ -n "${ARG_CF_TOKEN}" ]]; then
+        sed -i "s|^CLOUDFLARE_TUNNEL_TOKEN=.*|CLOUDFLARE_TUNNEL_TOKEN=${ARG_CF_TOKEN}|" .env
+    fi
 fi
 
 echo "[5/5] Starting TRAIL stack (auto-provisioning USB drive and containers)..."

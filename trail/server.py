@@ -30,6 +30,21 @@ def _safe_href(url: str) -> str:
     return "#"
 
 
+def format_si_bytes(num_bytes: int) -> str:
+    """Format a non-negative byte count in SI decimal units (B, kB, MB, GB, TB)."""
+    assert isinstance(num_bytes, int), "num_bytes must be an int"
+    clamped = max(0, num_bytes)
+    if clamped < 1_000:
+        return f"{clamped} B"
+    if clamped < 1_000_000:
+        return f"{clamped / 1_000:.2f} kB ({clamped} B)"
+    if clamped < 1_000_000_000:
+        return f"{clamped / 1_000_000:.2f} MB ({clamped} B)"
+    if clamped < 1_000_000_000_000:
+        return f"{clamped / 1_000_000_000:.2f} GB ({clamped} B)"
+    return f"{clamped / 1_000_000_000_000:.2f} TB ({clamped} B)"
+
+
 def render_opensearch_xml(base_url: str) -> str:
     """Render an OpenSearch 1.1 description XML document."""
     assert isinstance(base_url, str) and len(base_url) > 0, "base_url required"
@@ -84,16 +99,33 @@ def _render_pagination(query: str, page: int, per_page: int, total: int) -> str:
     return "".join(nav_parts)
 
 
-def render_html20_status_page(report: SystemUpdateReport) -> str:
-    """Render an RFC 1866 HTML 2.0 system version report without status brackets."""
+def render_html20_status_page(
+    report: SystemUpdateReport,
+    indexed_docs: int,
+    pending_queue: int,
+    stored_bytes: int,
+) -> str:
+    """Render an RFC 1866 HTML 2.0 index, storage, and subsystem version report."""
     assert isinstance(report, SystemUpdateReport), "report required"
     action = _escape_html(report.last_update_action)
+    formatted_size = _escape_html(format_si_bytes(stored_bytes))
     lines: List[str] = [
         '<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">\n',
-        "<HTML>\n<HEAD>\n<TITLE>TRAIL System Version Status</TITLE>\n</HEAD>\n<BODY>\n",
-        "<H1>TRAIL System Version Status</H1>\n",
+        "<HTML>\n<HEAD>\n<TITLE>TRAIL System and Index Status</TITLE>\n</HEAD>\n<BODY>\n",
+        "<H1>TRAIL System and Index Status</H1>\n",
+        "<H2>Index and Storage Metrics</H2>\n",
+        "<DL>\n",
+        "  <DT><B>Documents Indexed</B></DT>\n",
+        f"  <DD>{indexed_docs} documents</DD>\n",
+        "  <DT><B>Pending Crawl Queue</B></DT>\n",
+        f"  <DD>{pending_queue} URLs</DD>\n",
+        "  <DT><B>Stored Data Size</B></DT>\n",
+        f"  <DD>{formatted_size}</DD>\n",
+        "</DL>\n",
+        "<HR>\n",
+        "<H2>Subsystem Versions</H2>\n",
         f"<P>Last Action: {action}</P>\n",
-        "<HR>\n<DL>\n",
+        "<DL>\n",
     ]
     bound = min(len(report.components), MAX_COMPONENTS_DISPLAY)
     for idx in range(bound):
@@ -116,8 +148,6 @@ def render_html20_search_page(
     per_page: int,
     total_hits: int,
     results: List[SearchResult],
-    indexed_docs: int,
-    pending_queue: int,
     error_message: str = "",
 ) -> str:
     """Render a strict RFC 1866 HTML 2.0 search interface without CSS or JS."""
@@ -159,9 +189,7 @@ def render_html20_search_page(
     footer = (
         "<HR>\n"
         f"<P>TRAIL {ver_label} | "
-        f"Index Status: {indexed_docs} documents indexed | "
-        f"{pending_queue} URLs queued | "
-        '<A HREF="/status">Version Status</A> | '
+        '<A HREF="/status">System and Index Status</A> | '
         '<A HREF="/opensearch.xml">OpenSearch 1.1 XML</A></P>\n'
         "</BODY>\n"
         "</HTML>\n"
@@ -213,27 +241,29 @@ def dispatch_get_request(
         headers["Content-Type"] = "application/opensearchdescription+xml; charset=utf-8"
         return (200, headers, xml_body)
 
-    active_monitor = (
-        update_monitor if update_monitor is not None else TrailUpdateMonitor(config)
-    )
-    report = active_monitor.get_report()
-
     if path == "/status":
-        status_html = render_html20_status_page(report).encode("utf-8")
+        active_monitor = (
+            update_monitor
+            if update_monitor is not None
+            else TrailUpdateMonitor(config)
+        )
+        report = active_monitor.get_report()
+        docs, pending = storage.get_index_counts()
+        stored_bytes = storage.get_stored_data_bytes()
+        status_html = render_html20_status_page(
+            report, docs, pending, stored_bytes
+        ).encode("utf-8")
         headers = dict(base_headers)
         headers["Content-Type"] = "text/html; charset=utf-8"
         return (200, headers, status_html)
 
     if path not in ("/", "/search"):
-        docs, pending = storage.get_index_counts()
         not_found = render_html20_search_page(
             "",
             1,
             config.results_per_page,
             0,
             [],
-            docs,
-            pending,
             "Path not found.",
         ).encode("utf-8")
         headers = dict(base_headers)
@@ -243,7 +273,6 @@ def dispatch_get_request(
     params = parse_qs(parsed.query, keep_blank_values=True)
     raw_q = params.get("q", [""])[0]
     page_ok, page_num = parse_page_param(params.get("page", []))
-    docs, pending = storage.get_index_counts()
 
     if not page_ok:
         bad_page = render_html20_search_page(
@@ -252,8 +281,6 @@ def dispatch_get_request(
             config.results_per_page,
             0,
             [],
-            docs,
-            pending,
             "Page parameter must be an integer between 1 and 100.",
         ).encode("utf-8")
         headers = dict(base_headers)
@@ -262,7 +289,7 @@ def dispatch_get_request(
 
     if not raw_q.strip():
         home_body = render_html20_search_page(
-            "", 1, config.results_per_page, 0, [], docs, pending
+            "", 1, config.results_per_page, 0, []
         ).encode("utf-8")
         headers = dict(base_headers)
         headers["Content-Type"] = "text/html; charset=utf-8"
@@ -276,8 +303,6 @@ def dispatch_get_request(
             config.results_per_page,
             0,
             [],
-            docs,
-            pending,
             "Query contains invalid characters or exceeds 200 characters.",
         ).encode("utf-8")
         headers = dict(base_headers)
@@ -290,8 +315,6 @@ def dispatch_get_request(
         config.results_per_page,
         total,
         results,
-        docs,
-        pending,
     ).encode("utf-8")
     headers = dict(base_headers)
     headers["Content-Type"] = "text/html; charset=utf-8"

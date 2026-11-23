@@ -585,6 +585,13 @@ class TestTrailVersionAndAutoUpdate(unittest.TestCase):
                 return (0, "ok")
 
             # Act
+            storage.index_document(
+                "https://example.com/p1",
+                "example.com",
+                "Sample Doc",
+                "Sample body text for storage metric verification.",
+            )
+            storage.enqueue_url("https://example.com/p2", "example.com", 1, 2)
             monitor.refresh(
                 resolver=_stub_public_resolver,
                 fetcher=_mock_fetcher,
@@ -598,8 +605,15 @@ class TestTrailVersionAndAutoUpdate(unittest.TestCase):
             # Assert
             self.assertEqual(status_code, 200)
             self.assertIn('<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">', html_text)
+            self.assertIn("<TITLE>TRAIL System and Index Status</TITLE>", html_text)
+            self.assertIn("<H1>TRAIL System and Index Status</H1>", html_text)
+            self.assertIn("<H2>Index and Storage Metrics</H2>", html_text)
+            self.assertIn("<H2>Subsystem Versions</H2>", html_text)
             self.assertNotIn("[UP_TO_DATE]", html_text)
             self.assertNotIn("[UPDATE_AVAILABLE]", html_text)
+            self.assertIn("1 documents", html_text)
+            self.assertIn("1 URLs", html_text)
+            self.assertIn("Stored Data Size", html_text)
             self.assertIn("v2026-12-01", html_text)
             self.assertIn("AUTO_UPDATE (git:ok, apt:upgraded)", html_text)
             self.assertIn(
@@ -800,6 +814,9 @@ class TestTrailHtml20AndOpenSearch(unittest.TestCase):
             self.assertNotIn("<style", body_text.lower())
             self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", body_text)
             self.assertIn("TRAIL v2026 |", body_text)
+            self.assertIn('<A HREF="/status">System and Index Status</A>', body_text)
+            self.assertNotIn("documents indexed", body_text)
+            self.assertNotIn("URLs queued", body_text)
             self.assertNotIn("[UP_TO_DATE]", body_text)
             self.assertEqual(headers["X-Frame-Options"], "DENY")
 
